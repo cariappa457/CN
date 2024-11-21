@@ -1,60 +1,71 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <fcntl.h>
 #include <sys/types.h>
-#include <sys/stat.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <fcntl.h>
 #include <unistd.h>
 
-#define FIFO1 "fifo1"
-#define FIFO2 "fifo2"
+void error(const char *msg) {
+    perror(msg);
+    exit(1);
+}
 
-int main() {
-    char p[100], c[5000], ch;
-    int num, fd, fd2, f1;
-    
-    mknod(FIFO1, S_IFIFO | 0666, 0);
-    mknod(FIFO2, S_IFIFO | 0666, 0);
-    
-    printf("\nServer online...\n");
-    
-    fd = open(FIFO1, O_RDONLY);
-    fd2 = open(FIFO2, O_WRONLY);
-    
-    if (fd < 0 || fd2 < 0) {
-        perror("Error opening FIFOs");
+int main(int argc, char *argv[]) {
+    int fd, sockfd, newsockfd, clilen, portno, n;
+    struct sockaddr_in seradd, cliadd;
+    char buffer[4096];
+
+    if (argc < 2) {
+        fprintf(stderr, "No port provided\n");
         exit(1);
     }
-    
-    printf("Server online\nWaiting for client...\n\n");
-    
-    if ((num = read(fd, p, 100)) == -1) {
-        perror("Read Error");
-    } else {
-        p[num] = '\0';
-        printf("\nFile is %s.\n", p);
-        
-        if ((f1 = open(p, O_RDONLY)) < 0) {
-            write(fd2, "File not found", 15);
-            return 1;
-        } else {
-            FILE *file = fdopen(f1, "r");
-            num = 0;
-            while ((ch = fgetc(file)) != EOF) {
-                c[num++] = ch;
-            }
-            c[num] = '\0';
-            fclose(file);
-            printf("Server: Transferring the contents of: %s\n", p);
-            if ((num = write(fd2, c, strlen(c))) == -1) {
-                printf("Error in writing to FIFO\n");
-            } else {
-                printf("File transfer completed\n");
-            }
+
+    portno = atoi(argv[1]);
+    sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0) 
+        error("Error opening socket");
+
+    memset((char *)&seradd, 0, sizeof(seradd));
+    seradd.sin_family = AF_INET;
+    seradd.sin_addr.s_addr = INADDR_ANY;
+    seradd.sin_port = htons(portno);
+
+    if (bind(sockfd, (struct sockaddr *)&seradd, sizeof(seradd)) < 0)
+        error("Error on binding");
+
+    listen(sockfd, 5);
+    clilen = sizeof(cliadd);
+    printf("Server waiting for client requests\n");
+
+    while (1) {
+        newsockfd = accept(sockfd, (struct sockaddr *)&cliadd, (socklen_t *)&clilen);
+        if (newsockfd < 0) 
+            error("Error on accept");
+
+        memset(buffer, 0, 4096);
+        n = read(newsockfd, buffer, 4096);
+        if (n < 0) 
+            error("Error reading from socket");
+
+        fd = open(buffer, O_RDONLY);
+        if (fd < 0) 
+            error("File does not exist");
+
+        while ((n = read(fd, buffer, 4096)) > 0) {
+            if (write(newsockfd, buffer, n) < 0) 
+                error("Error writing to socket");
         }
+
+        if (n < 0) 
+            error("Error reading the file");
+
+        printf("File transfer complete\n");
+        close(fd);
+        close(newsockfd);
     }
-    
-    close(fd);
-    close(fd2);
+
+    close(sockfd);
     return 0;
 }
